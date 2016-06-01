@@ -210,27 +210,37 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
 {
   if (Client != NULL)
   {
-    int DataType = Client->Socket->ReceiveInteger();
+    long DataType = Client->Socket->ReceiveInteger();
     switch (DataType)
     {
+      case -1:
+      {
+        return 0;
+      }
       case ND_CreateRoom:
       {
         char* RoomName = Client->Socket->ReceiveString();
+        if (RoomName == NULL)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a request from player " << Client->Id << " to create a room named " << RoomName << std::endl;
   #endif
+        Client->Server->LeaveRoom(Client);
         Client->Server->JoinRoom(Client, Client->Server->CreateRoom(Client, RoomName));
         delete[] RoomName;
         break;
       }
       case ND_JoinRoom:
       {
-        unsigned int RoomId = Client->Socket->ReceiveInteger();
+        long RoomId = Client->Socket->ReceiveInteger();
+        if (RoomId == -1)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a request from player " << Client->Id << " to join the room " << RoomId << std::endl;
   #endif
+        Client->Server->LeaveRoom(Client);
         Client->Server->JoinRoom(Client, Client->Server->FindRoom(RoomId));
         break;
       }
@@ -245,74 +255,27 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
       }
       case ND_RemovePlayer:
       {
-        unsigned int PlayerId = Client->Socket->ReceiveInteger();
+        long PlayerId = Client->Socket->ReceiveInteger();
+        if (PlayerId == -1)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a request from player " << Client->Id << " to kick player " << PlayerId << " from the room" << std::endl;
   #endif
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL && Room->Owner == Client)
-        {
-          /* Find the target player */
-          GameServerClient* OtherPlayer = NULL;
-          if (Room->BlackPlayer != NULL && Room->BlackPlayer->Id == PlayerId)
-            OtherPlayer = Room->BlackPlayer;
-          else if (Room->WhitePlayer != NULL && Room->WhitePlayer->Id == PlayerId)
-            OtherPlayer = Room->WhitePlayer;
-          else
-          {
-            OtherPlayer = Room->Observers.GetFirst();
-            while (OtherPlayer != NULL && OtherPlayer->Id != PlayerId)
-              OtherPlayer = Room->Observers.GetNext();
-          }
-
-          /* Remove the player from the room */
-          Client->Server->LeaveRoom(OtherPlayer);
-        }
+        if (Client->Room != NULL && Client == Client->Room->Owner)
+          Client->Server->LeaveRoom(Client->Server->FindPlayer(PlayerId));
         break;
       }
       case ND_ChangeType:
       {
         PlayerType Type = (PlayerType)Client->Socket->ReceiveInteger();
+        if (Type == -1)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a request from player " << Client->Id << " to change his type to " << Type << std::endl;
   #endif
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL)
-        {
-          if ((Type == ObserverType && (Client == Room->BlackPlayer || Client == Room->WhitePlayer)) || (Type == BlackPlayerType && Room->BlackPlayer == NULL) || (Type == WhitePlayerType && Room->WhitePlayer == NULL))
-          {
-            /* Update the player */
-            Client->Ready = false;
-
-            /* Update the room */
-            if (Client == Room->BlackPlayer)
-              Room->BlackPlayer = NULL;
-            else if (Client == Room->WhitePlayer)
-              Room->WhitePlayer = NULL;
-            else
-              Room->Observers.Remove(Client);
-            if (Type == BlackPlayerType)
-              Room->BlackPlayer = Client;
-            else if (Type == WhitePlayerType)
-              Room->WhitePlayer = Client;
-            else if (Type == ObserverType)
-              Room->Observers.Add(Client);
-
-            /* Notify the room's players */
-            if (Room->WhitePlayer != NULL)
-              Room->WhitePlayer->SendPlayerType(Client->Id,Type);
-            if (Room->BlackPlayer != NULL)
-              Room->BlackPlayer->SendPlayerType(Client->Id,Type);
-            GameServerClient* Ptr = Room->Observers.GetFirst();
-            while (Ptr != NULL)
-            {
-              Ptr->SendPlayerType(Client->Id,Type);
-              Ptr = Room->Observers.GetNext();
-            }
-          }
-        }
+        Client->Server->ChangeSeat(Client, Type);
         break;
       }
       case ND_Disconnection:
@@ -321,127 +284,65 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
       /* Output to log */
       std::cout << "Player " << Client->Id << " disconnected from the server" << std::endl;
   #endif
-        Client->Server->LeaveRoom(Client);
         return 0;
       }
       case ND_GameData:
       {
-        unsigned long DataSize = (unsigned long)Client->Socket->ReceiveInteger();
-        if (DataSize > 0)
-        {
-          unsigned char* Data = new unsigned char[DataSize];
-          if (Client->Socket->ReceiveBytes(Data, DataSize) == DataSize)
-          {
-            GameServerRoom* Room = Client->Room;
-            if (Room != NULL)
-            {
-              /* Forward to unsynchronised players */
-              if (Room->WhitePlayer != NULL && !Room->WhitePlayer->Synchronised)
-              {
-                Room->WhitePlayer->SendGameData(Data,DataSize);
-                Room->WhitePlayer->Synchronised = true;
-              }
-              if (Room->BlackPlayer != NULL && !Room->BlackPlayer->Synchronised)
-              {
-                Room->BlackPlayer->SendGameData(Data,DataSize);
-                Room->BlackPlayer->Synchronised = true;
-              }
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                if (!Ptr->Synchronised)
-                  Ptr->SendGameData(Data,DataSize);
-                Ptr->Synchronised = true;
-                Ptr = Room->Observers.GetNext();
-              }
-            }
-          }
-          delete[] Data;
-        }
+        long DataSize = (unsigned long)Client->Socket->ReceiveInteger();
+        if (DataSize == -1)
+          return 0;
+        unsigned char* Data = new unsigned char[DataSize];
+        if (Data == NULL)
+          return 0;
+        if (Client->Socket->ReceiveBytes(Data, DataSize) == (unsigned long)DataSize)
+          Client->Server->SendGameData(Client, Data, DataSize);
+        delete[] Data;
         break;
       }
       case ND_Message:
       {
         char* Message = Client->Socket->ReceiveString();
+        if (Message == NULL)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a message from player " << Client->Id << " : " << Message << std::endl;
   #endif
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL)
-        {
-          /* Forward to the entire room */
-          if (Room->WhitePlayer != NULL)
-            Room->WhitePlayer->SendMessage(Client->Id,Message);
-          if (Room->BlackPlayer != NULL)
-            Room->BlackPlayer->SendMessage(Client->Id,Message);
-          GameServerClient* Ptr = Room->Observers.GetFirst();
-          while (Ptr != NULL)
-          {
-            Ptr->SendMessage(Client->Id,Message);
-            Ptr = Room->Observers.GetNext();
-          }
-        }
+        Client->Server->SendMessage(Client, Message);
         delete[] Message;
         break;
       }
       case ND_Move:
       {
-        unsigned long Data = Client->Socket->ReceiveInteger();
+        long Data = Client->Socket->ReceiveInteger();
+        if (Data == -1)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a move from player " << Client->Id << std::endl;
   #endif
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL && (Client == Room->WhitePlayer || Client == Room->BlackPlayer))
-        {
-          /* Forward to the entire room */
-          if (Room->WhitePlayer != NULL)
-            Room->WhitePlayer->SendMove(Data);
-          if (Room->BlackPlayer != NULL)
-            Room->BlackPlayer->SendMove(Data);
-          GameServerClient* Ptr = Room->Observers.GetFirst();
-          while (Ptr != NULL)
-          {
-            Ptr->SendMove(Data);
-            Ptr = Room->Observers.GetNext();
-          }
-        }
+        if (Client->Room != NULL && (Client == Client->Room->WhitePlayer || Client == Client->Room->BlackPlayer))
+          Client->Server->SendMove(Client->Room, Data);
         break;
       }
       case ND_Name:
       {
         char* PlayerName = Client->Socket->ReceiveString();
+        if (PlayerName == NULL)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received player " << Client->Id << "'s name : " << PlayerName << std::endl;
   #endif
-        /* Update the player */
-        Client->Name = PlayerName;
-
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL)
-        {
-          /* Forward to the entire room */
-          if (Room->WhitePlayer != NULL)
-            Room->WhitePlayer->SendName(Client->Id,Client->Name);
-          if (Room->BlackPlayer != NULL)
-            Room->BlackPlayer->SendName(Client->Id,Client->Name);
-          GameServerClient* Ptr = Room->Observers.GetFirst();
-          while (Ptr != NULL)
-          {
-            Ptr->SendName(Client->Id,Client->Name);
-            Ptr = Room->Observers.GetNext();
-          }
-        }
-        else
-          Client->SendName(Client->Id,Client->Name);
+        Client->Server->SetName(Client, PlayerName);
         delete[] PlayerName;
         break;
       }
       case ND_NetworkRequest:
       {
         NetworkRequestType Request = (NetworkRequestType)Client->Socket->ReceiveInteger();
+        if (Request == -1)
+          return 0;
         switch (Request)
         {
           case RoomList:
@@ -457,23 +358,11 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
       case ND_Notification:
       {
         NotificationType Notification = (NotificationType)Client->Socket->ReceiveInteger();
+        if (Notification == -1)
+          return 0;
         GameServerRoom* Room = Client->Room;
         if (Room != NULL && (Client == Room->WhitePlayer || Client == Room->BlackPlayer))
         {
-          if (Notification != IAmReady && Notification != IResign && Notification != GameEnded)
-          {
-            /* Forward to the entire room */
-            if (Room->WhitePlayer != NULL)
-              Room->WhitePlayer->SendNotification(Notification);
-            if (Room->BlackPlayer != NULL)
-              Room->BlackPlayer->SendNotification(Notification);
-            GameServerClient* Ptr = Room->Observers.GetFirst();
-            while (Ptr != NULL)
-            {
-              Ptr->SendNotification(Notification);
-              Ptr = Room->Observers.GetNext();
-            }
-          }
           switch (Notification)
           {
             case IAmReady:
@@ -482,123 +371,42 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
               /* Output to log */
               std::cout << "Received a ready notification from player " << Client->Id << std::endl;
   #endif
-              /* Update player */
-              Client->Ready = true;
-
-              /* Notify the room's players */
-              if (Room->WhitePlayer != NULL)
-                Room->WhitePlayer->SendPlayerReady(Client->Id);
-              if (Room->BlackPlayer != NULL)
-                Room->BlackPlayer->SendPlayerReady(Client->Id);
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                Ptr->SendPlayerReady(Client->Id);
-                Ptr = Room->Observers.GetNext();
-              }
-              if (Room->WhitePlayer != NULL && Room->WhitePlayer->Ready && Room->BlackPlayer != NULL && Room->BlackPlayer->Ready)
-              {
-                /* Update room players */
-                Room->WhitePlayer->Ready = false;
-                Room->BlackPlayer->Ready = false;
-
-                /* Notify the room's players */
-                if (Room->WhitePlayer != NULL)
-                  Room->WhitePlayer->SendNotification(GameStarted);
-                if (Room->BlackPlayer != NULL)
-                  Room->BlackPlayer->SendNotification(GameStarted);
-                Ptr = Room->Observers.GetFirst();
-                while (Ptr != NULL)
-                {
-                  Ptr->SendNotification(GameStarted);
-                  Ptr = Room->Observers.GetNext();
-                }
-              }
+              Client->Server->SetReady(Client);
               break;
             }
             case IResign:
             {
-              /* Notify the room's players */
-              if (Room->WhitePlayer != NULL)
-                Room->WhitePlayer->SendNotification(Resigned);
-              if (Room->BlackPlayer != NULL)
-                Room->BlackPlayer->SendNotification(Resigned);
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                Ptr->SendNotification(Resigned);
-                Ptr = Room->Observers.GetNext();
-              }
+              Client->Server->SendNotification(Room, Resigned);
               break;
             }
             case GamePaused:
             {
-              /* Update room */
               Room->Paused = true;
-
-              /* Notify the room's players */
-              if (Room->WhitePlayer != NULL)
-                Room->WhitePlayer->SendNotification(GamePaused);
-              if (Room->BlackPlayer != NULL)
-                Room->BlackPlayer->SendNotification(GamePaused);
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                Ptr->SendNotification(GamePaused);
-                Ptr = Room->Observers.GetNext();
-              }
+              Client->Server->SendNotification(Room, GamePaused);
               break;
             }
             case GameResumed:
             {
-              /* Update room */
               Room->Paused = false;
-
-              /* Notify the room's players */
-              if (Room->WhitePlayer != NULL)
-                Room->WhitePlayer->SendNotification(GameResumed);
-              if (Room->BlackPlayer != NULL)
-                Room->BlackPlayer->SendNotification(GameResumed);
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                Ptr->SendNotification(GameResumed);
-                Ptr = Room->Observers.GetNext();
-              }
+              Client->Server->SendNotification(Room, GameResumed);
               break;
             }
             case DrawRequestAccepted:
             {
-              /* Notify the room's players */
-              if (Room->WhitePlayer != NULL)
-                Room->WhitePlayer->SendNotification(GameDrawed);
-              if (Room->BlackPlayer != NULL)
-                Room->BlackPlayer->SendNotification(GameDrawed);
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                Ptr->SendNotification(GameDrawed);
-                Ptr = Room->Observers.GetNext();
-              }
+              Client->Server->SendNotification(Room, GameDrawed);
               break;
             }
             case TakebackRequestAccepted:
             {
-              /* Notify the room's players */
-              if (Room->WhitePlayer != NULL)
-                Room->WhitePlayer->SendNotification(TookbackMove);
-              if (Room->BlackPlayer != NULL)
-                Room->BlackPlayer->SendNotification(TookbackMove);
-              GameServerClient* Ptr = Room->Observers.GetFirst();
-              while (Ptr != NULL)
-              {
-                Ptr->SendNotification(TookbackMove);
-                Ptr = Room->Observers.GetNext();
-              }
+              Client->Server->SendNotification(Room, TookbackMove);
+              break;
+            }
+            case GameEnded:
+            {
               break;
             }
             default:
-              break;
+              Client->Server->SendNotification(Room, Notification);
           }
         }
         break;
@@ -606,67 +414,38 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
       case ND_PlayerRequest:
       {
         PlayerRequestType Request = (PlayerRequestType)Client->Socket->ReceiveInteger();
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL)
-        {
-          /* Forward to the opposing player */
-          if (Client == Room->WhitePlayer && Room->BlackPlayer != NULL)
-            Room->BlackPlayer->SendPlayerRequest(Request);
-          if (Client == Room->BlackPlayer && Room->WhitePlayer != NULL)
-            Room->WhitePlayer->SendPlayerRequest(Request);
-        }
+        if (Request == -1)
+          return 0;
+        Client->Server->SendRequest(Client, Request);
         break;
       }
       case ND_PlayerTime:
       {
-        unsigned long Time = Client->Socket->ReceiveInteger();
+        long Time = Client->Socket->ReceiveInteger();
+        if (Time == -1)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received time from player " << Client->Id << std::endl;
   #endif
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL && (Client == Room->WhitePlayer || Client == Room->BlackPlayer))
-        {
-          /* Forward to the entire room */
-          if (Room->WhitePlayer != NULL && Room->WhitePlayer != Client)
-            Room->WhitePlayer->SendTime(Client->Id,Time);
-          if (Room->BlackPlayer != NULL && Room->BlackPlayer != Client)
-            Room->BlackPlayer->SendTime(Client->Id,Time);
-          GameServerClient* Ptr = Room->Observers.GetFirst();
-          while (Ptr != NULL)
-          {
-            Ptr->SendTime(Client->Id,Time);
-            Ptr = Room->Observers.GetNext();
-          }
-        }
+        if (Client->Room != NULL && (Client == Client->Room->WhitePlayer || Client == Client->Room->BlackPlayer))
+          Client->Server->SendTime(Client->Room, Client->Id, Time);
         break;
       }
       case ND_PromoteTo:
       {
         int Type = Client->Socket->ReceiveInteger();
+        if (Type == -1)
+          return 0;
   #ifdef DEBUG
         /* Output to log */
         std::cout << "Received a piece promotion to " << Type << " from player " << Client->Id << std::endl;
   #endif
-        GameServerRoom* Room = Client->Room;
-        if (Room != NULL)
-        {
-          /* Forward to the entire room */
-          if (Room->WhitePlayer != NULL)
-            Room->WhitePlayer->SendPromoteTo(Type);
-          if (Room->BlackPlayer != NULL)
-            Room->BlackPlayer->SendPromoteTo(Type);
-          GameServerClient* Ptr = Room->Observers.GetFirst();
-          while (Ptr != NULL)
-          {
-            Ptr->SendPromoteTo(Type);
-            Ptr = Room->Observers.GetNext();
-          }
-        }
+        Client->Server->SendPromotion(Client->Room, Type);
         break;
       }
       default:
-        break;
+        return 0;
     }
     return 1;
   }
@@ -684,14 +463,15 @@ unsigned int GameServerClient::Run()
   Version = Socket->ReceiveInteger();
 
   /* Validate the version information */
-  if (strcmp(GameServer::Id,Str) == 0 && Version >= GameServer::SupportedVersion)
+  if (Str != NULL && strcmp(GameServer::Id,Str) == 0 && Version >= GameServer::SupportedVersion)
   {
     /* Send the new id to the player */
     SendPlayerId(Id);
 
-    while (ReceiveData(this));
+    while (ReceiveData(this) > 0);
 
     /* Remove the player from the server */
+    Server->LeaveRoom(this);
     Server->RemoveClient(this);
   }
 

@@ -116,6 +116,8 @@
 			$("#refreshRooms").button().click(getRooms);
 			getPlayers();
 			getRooms();
+			setInterval("getPlayers()", 30000);
+            setInterval("getRooms()", 30000);
 		});
 	</script>
 </body>

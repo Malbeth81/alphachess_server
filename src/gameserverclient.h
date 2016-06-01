@@ -20,11 +20,10 @@
 #ifndef GAMESERVERCLIENT_H_
 #define GAMESERVERCLIENT_H_
 
-#include "gamedata.h"
+#include "gameserverdata.h"
 #include "gameserver.h"
 #include "system.h"
 #include <limits.h>
-#include <linkedlist.h>
 #include <string>
 #include <tcpclientsocket.h>
 #include <tcpserversocket.h>

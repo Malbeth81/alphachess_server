@@ -40,21 +40,75 @@ GameServer::GameServer()
 {
   ClientIdCounter = 0;
   RoomIdCounter = 0;
+
+  Mutex = CreateMutex(NULL,FALSE,NULL);
+
   Resume();
 }
 
 GameServer::~GameServer()
 {
-  /* Clean up */
-  while (Clients.Size() > 0)
-    delete Clients.Remove();
-  while (Rooms.Size() > 0)
-    delete Rooms.Remove();
+  if (WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    list<GameServerClient*>::iterator it;
+    for (it = Clients.begin(); it != Clients.end(); it++)
+      delete *it;
+    Clients.clear();
+
+    list<GameServerRoom*>::iterator it2;
+    for (it2 = Rooms.begin(); it2 != Rooms.end(); it2++)
+      delete *it2;
+    Rooms.clear();
+
+    ReleaseMutex(Mutex);
+    CloseHandle(Mutex);
+  }
+}
+
+void GameServer::ChangeSeat(GameServerClient* Client, PlayerType Type)
+{
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    GameServerRoom* Room = Client->Room;
+    if (Room != NULL)
+    {
+      if ((Type == ObserverType && (Client == Room->BlackPlayer || Client == Room->WhitePlayer)) || (Type == BlackPlayerType && Room->BlackPlayer == NULL) || (Type == WhitePlayerType && Room->WhitePlayer == NULL))
+      {
+        /* Update the player */
+        Client->Ready = false;
+
+        /* Update the room */
+        if (Client == Room->BlackPlayer)
+          Room->BlackPlayer = NULL;
+        else if (Client == Room->WhitePlayer)
+          Room->WhitePlayer = NULL;
+        else
+          Room->Observers.remove(Client);
+        if (Type == BlackPlayerType)
+          Room->BlackPlayer = Client;
+        else if (Type == WhitePlayerType)
+          Room->WhitePlayer = Client;
+        else if (Type == ObserverType)
+            Room->Observers.push_back(Client);
+
+        /* Notify the room's players */
+        if (Room->WhitePlayer != NULL)
+          Room->WhitePlayer->SendPlayerType(Client->Id,Type);
+        if (Room->BlackPlayer != NULL)
+          Room->BlackPlayer->SendPlayerType(Client->Id,Type);
+        list<GameServerClient*>::iterator it;
+        for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+          (*it)->SendPlayerType(Client->Id,Type);
+      }
+    }
+    ReleaseMutex(Mutex);
+  }
 }
 
 GameServerRoom* GameServer::CreateRoom(GameServerClient* Client, string Name)
 {
-  if (Client != NULL)
+  GameServerRoom* Room = NULL;
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
   {
     if (RoomIdCounter == UINT_MAX)
       RoomIdCounter = 1;
@@ -62,7 +116,7 @@ GameServerRoom* GameServer::CreateRoom(GameServerClient* Client, string Name)
       RoomIdCounter++;
 
     /* Create a new room */
-    GameServerRoom* Room = new GameServerRoom;
+    Room = new GameServerRoom;
     Room->Id = RoomIdCounter;
     Room->Locked = false;
     Room->Paused = false;
@@ -72,38 +126,96 @@ GameServerRoom* GameServer::CreateRoom(GameServerClient* Client, string Name)
     Room->WhitePlayer = NULL;
 
     /* Add to the list */
-    Rooms.Add(Room);
+    Rooms.push_back(Room);
 
-    return Room;
+    ReleaseMutex(Mutex);
   }
-  return NULL;
+  return Room;
+}
+
+GameServerClient* GameServer::FindPlayer(unsigned int Id)
+{
+  GameServerClient* Result = NULL;
+  if (WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    list<GameServerClient*>::iterator it;
+    for (it = Clients.begin(); it != Clients.end(); it++)
+      if ((*it)->Id == Id)
+        Result = (*it);
+    ReleaseMutex(Mutex);
+  }
+  return Result;
 }
 
 GameServerRoom* GameServer::FindRoom(unsigned int Id)
 {
-  GameServerRoom* Room = Rooms.GetFirst();
-  while (Room != NULL && Room->Id != Id)
-    Room = Rooms.GetNext();
-  return Room;
+  GameServerRoom* Result = NULL;
+  if (WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    list<GameServerRoom*>::iterator it;
+    for (it = Rooms.begin(); it != Rooms.end(); it++)
+      if ((*it)->Id == Id)
+        Result = (*it);
+    ReleaseMutex(Mutex);
+  }
+  return Result;
 }
 
-const LinkedList<GameServerClient> GameServer::GetClients()
+list<GameServerClientInfo*>* GameServer::GetClients()
 {
-  return Clients;
+  list<GameServerClientInfo*>* List = new list<GameServerClientInfo*>;
+  if (WaitForSingleObject(Mutex,1000) == WAIT_OBJECT_0)
+  {
+    list<GameServerClient*>::iterator it;
+    for (it = Clients.begin(); it != Clients.end(); it++)
+    {
+      GameServerClientInfo* Info = new GameServerClientInfo;
+      Info->Id = (*it)->Id;
+      Info->Name = (*it)->Name;
+      Info->Ready = (*it)->Ready;
+      Info->RoomId = ((*it)->Room != NULL ? (*it)->Room->Id : 0);
+      Info->Synchronised = (*it)->Synchronised;
+      if ((*it)->Room != NULL && (*it) == (*it)->Room->WhitePlayer)
+        Info->Type = WhitePlayerType;
+      else if ((*it)->Room != NULL && (*it) == (*it)->Room->BlackPlayer)
+        Info->Type = BlackPlayerType;
+      else
+        Info->Type = ObserverType;
+      Info->Version = (*it)->Version;
+      Info->ConnectionTime = (*it)->ConnectionTime();
+      List->push_back(Info);
+    }
+    ReleaseMutex(Mutex);
+  }
+  return List;
 }
 
-const LinkedList<GameServerRoom> GameServer::GetRooms()
+list<GameServerRoomInfo*>* GameServer::GetRooms()
 {
-  return Rooms;
+  list<GameServerRoomInfo*>* List = new list<GameServerRoomInfo*>;
+  if (WaitForSingleObject(Mutex,1000) == WAIT_OBJECT_0)
+  {
+    list<GameServerRoom*>::iterator it;
+    for (it = Rooms.begin(); it != Rooms.end(); it++)
+    {
+      GameServerRoomInfo* Info = new GameServerRoomInfo;
+      Info->Id = (*it)->Id;
+      Info->Name = (*it)->Name;
+      Info->Locked = (*it)->Locked;
+      Info->Paused = (*it)->Paused;
+      Info->Started = ((*it)->BlackPlayer != NULL && (*it)->BlackPlayer->Ready && (*it)->WhitePlayer != NULL && (*it)->WhitePlayer->Ready);
+      Info->Players = (*it)->Observers.size()+((*it)->BlackPlayer != NULL ? 1 : 0)+((*it)->WhitePlayer != NULL ? 1 : 0);
+      List->push_back(Info);
+    }
+    ReleaseMutex(Mutex);
+  }
+  return List;
 }
 
 void GameServer::JoinRoom(GameServerClient* Client, GameServerRoom* Room)
 {
-  if (Client != NULL && Room != NULL)
+  if (Client != NULL && Room != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
   {
-    /* Leave the current room, if any */
-    LeaveRoom(Client);
-
     /* Notify the player that he his joining the room */
     Client->SendNotification(JoinedRoom);
 
@@ -111,13 +223,10 @@ void GameServer::JoinRoom(GameServerClient* Client, GameServerRoom* Room)
     if (Room->WhitePlayer != NULL)
       Room->WhitePlayer->SendPlayerJoined(Client->Id, Client->Name);
     if (Room->BlackPlayer != NULL)
-      Room->WhitePlayer->SendPlayerJoined(Client->Id, Client->Name);
-    GameServerClient* Ptr = Room->Observers.GetFirst();
-    while (Ptr != NULL)
-    {
-      Ptr->SendPlayerJoined(Client->Id, Client->Name);
-      Ptr = Room->Observers.GetNext();
-    }
+      Room->BlackPlayer->SendPlayerJoined(Client->Id, Client->Name);
+    list<GameServerClient*>::iterator it;
+    for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      (*it)->SendPlayerJoined(Client->Id, Client->Name);
 
     /* Send info on the room to the player */
     if (Room->WhitePlayer != NULL)
@@ -130,15 +239,11 @@ void GameServer::JoinRoom(GameServerClient* Client, GameServerRoom* Room)
       Client->SendPlayerJoined(Room->BlackPlayer->Id, Room->BlackPlayer->Name);
       Client->SendPlayerType(Room->BlackPlayer->Id, BlackPlayerType);
     }
-    Ptr = Room->Observers.GetFirst();
-    while (Ptr != NULL)
-    {
-      Client->SendPlayerJoined(Ptr->Id, Ptr->Name);
-      Ptr = Room->Observers.GetNext();
-    }
+    for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      Client->SendPlayerJoined((*it)->Id, (*it)->Name);
 
     /* Add the player to the room */
-    Room->Observers.Add(Client);
+    Room->Observers.push_back(Client);
     Client->Room = Room;
     Client->Ready = false;
     if (Room->Owner == Client)
@@ -152,12 +257,14 @@ void GameServer::JoinRoom(GameServerClient* Client, GameServerRoom* Room)
     /* Notify the player if he is the room owner */
     if (Room->Owner == Client)
       Client->SendHostChanged(Client->Id);
+
+    ReleaseMutex(Mutex);
   }
 }
 
 void GameServer::LeaveRoom(GameServerClient* Client)
 {
-  if (Client != NULL)
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
   {
     /* Find the room the player is in */
     GameServerRoom* Room = Client->Room;
@@ -172,14 +279,14 @@ void GameServer::LeaveRoom(GameServerClient* Client)
       else if (Room->BlackPlayer == Client)
         Room->BlackPlayer = NULL;
       else
-        Room->Observers.Remove(Client);
+        Room->Observers.remove(Client);
       Client->Room = NULL;
       Client->Ready = false;
 
       /* Delete the room if there are no more players in it */
-      if (Room->WhitePlayer == NULL && Room->BlackPlayer == NULL && Room->Observers.Size() == 0)
+      if (Room->WhitePlayer == NULL && Room->BlackPlayer == NULL && Room->Observers.size() == 0)
       {
-        Rooms.Remove(Room);
+        Rooms.remove(Room);
         delete Room;
       }
       else
@@ -192,9 +299,10 @@ void GameServer::LeaveRoom(GameServerClient* Client)
           else if (Room->BlackPlayer != NULL)
             Room->Owner = Room->BlackPlayer;
           else
-            Room->Owner = Room->Observers.GetFirst();
+            Room->Owner = *(Room->Observers.begin());
           /* Notify the player that he is the new game host */
-          Room->Owner->SendHostChanged(Room->Owner->Id);
+          if (Room->Owner != NULL)
+            Room->Owner->SendHostChanged(Room->Owner->Id);
         }
 
         /* Notify the room's players that a player left */
@@ -202,34 +310,222 @@ void GameServer::LeaveRoom(GameServerClient* Client)
           Room->WhitePlayer->SendPlayerLeft(Client->Id);
         if (Room->BlackPlayer != NULL)
           Room->BlackPlayer->SendPlayerLeft(Client->Id);
-        GameServerClient* Ptr = Room->Observers.GetFirst();
-        while (Ptr != NULL)
-        {
-          Ptr->SendPlayerLeft(Client->Id);
-          Ptr = Room->Observers.GetNext();
-        }
+        list<GameServerClient*>::iterator it;
+        for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+          (*it)->SendPlayerLeft(Client->Id);
       }
     }
+    ReleaseMutex(Mutex);
   }
 }
 
 void GameServer::RemoveClient(GameServerClient* Client)
 {
-  if (Client != NULL)
-    Clients.Remove(Client);
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    Clients.remove(Client);
+    ReleaseMutex(Mutex);
+  }
 }
 
+void GameServer::SendGameData(GameServerClient* Client, unsigned char* Data, unsigned long DataSize)
+{
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    GameServerRoom* Room = Client->Room;
+    if (Room != NULL)
+    {
+      /* Forward to unsynchronised players */
+      if (Room->WhitePlayer != NULL && !Room->WhitePlayer->Synchronised)
+      {
+        Room->WhitePlayer->SendGameData(Data,DataSize);
+        Room->WhitePlayer->Synchronised = true;
+      }
+      if (Room->BlackPlayer != NULL && !Room->BlackPlayer->Synchronised)
+      {
+        Room->BlackPlayer->SendGameData(Data,DataSize);
+        Room->BlackPlayer->Synchronised = true;
+      }
+      list<GameServerClient*>::iterator it;
+      for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      {
+        if (!(*it)->Synchronised)
+          (*it)->SendGameData(Data,DataSize);
+        (*it)->Synchronised = true;
+      }
+    }
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SendMessage(GameServerClient* Client, char* Message)
+{
+  if (Client != NULL && Message != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    GameServerRoom* Room = Client->Room;
+    if (Room != NULL)
+    {
+      /* Forward to the entire room */
+      if (Room->WhitePlayer != NULL)
+        Room->WhitePlayer->SendMessage(Client->Id,Message);
+      if (Room->BlackPlayer != NULL)
+        Room->BlackPlayer->SendMessage(Client->Id,Message);
+      list<GameServerClient*>::iterator it;
+      for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+        (*it)->SendMessage(Client->Id,Message);
+    }
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SendMove(GameServerRoom* Room, unsigned long Data)
+{
+  if (Room != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    /* Forward to the entire room */
+    if (Room->WhitePlayer != NULL)
+      Room->WhitePlayer->SendMove(Data);
+    if (Room->BlackPlayer != NULL)
+      Room->BlackPlayer->SendMove(Data);
+    list<GameServerClient*>::iterator it;
+    for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      (*it)->SendMove(Data);
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SendNotification(GameServerRoom* Room, NotificationType Notification)
+{
+  if (Room != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    /* Forward to the entire room */
+    if (Room->WhitePlayer != NULL)
+      Room->WhitePlayer->SendNotification(Notification);
+    if (Room->BlackPlayer != NULL)
+      Room->BlackPlayer->SendNotification(Notification);
+    list<GameServerClient*>::iterator it;
+    for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      (*it)->SendNotification(Notification);
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SendPromotion(GameServerRoom* Room, int Type)
+{
+  if (Room != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    /* Forward to the entire room */
+    if (Room->WhitePlayer != NULL)
+      Room->WhitePlayer->SendPromoteTo(Type);
+    if (Room->BlackPlayer != NULL)
+      Room->BlackPlayer->SendPromoteTo(Type);
+    list<GameServerClient*>::iterator it;
+    for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      (*it)->SendPromoteTo(Type);
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SendRequest(GameServerClient* Client, PlayerRequestType Request)
+{
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    GameServerRoom* Room = Client->Room;
+    if (Room != NULL)
+    {
+      /* Forward to the opposing player */
+      if (Client == Room->WhitePlayer && Room->BlackPlayer != NULL)
+        Room->BlackPlayer->SendPlayerRequest(Request);
+      if (Client == Room->BlackPlayer && Room->WhitePlayer != NULL)
+        Room->WhitePlayer->SendPlayerRequest(Request);
+    }
+    ReleaseMutex(Mutex);
+  }
+}
 
 void GameServer::SendRoomList(GameServerClient* Client)
 {
-  if (Client != NULL)
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
   {
-    GameServerRoom* Ptr = Rooms.GetFirst();
-    while (Ptr != NULL)
+    list<GameServerRoom*>::iterator it;
+    for (it = Rooms.begin(); it != Rooms.end(); it++)
+      Client->SendRoomInfo((*it)->Id,(*it)->Name,(*it)->Locked,((*it)->BlackPlayer != NULL ? 1 : 0) + ((*it)->WhitePlayer != NULL ? 1 : 0) + (*it)->Observers.size());
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SendTime(GameServerRoom* Room, unsigned int Id, unsigned long Time)
+{
+  if (Room != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    /* Forward to the entire room */
+    if (Room->WhitePlayer != NULL && Room->WhitePlayer->Id != Id)
+      Room->WhitePlayer->SendTime(Id,Time);
+    if (Room->BlackPlayer != NULL && Room->BlackPlayer->Id != Id)
+      Room->BlackPlayer->SendTime(Id,Time);
+    list<GameServerClient*>::iterator it;
+    for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+      (*it)->SendTime(Id,Time);
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SetName(GameServerClient* Client, char* PlayerName)
+{
+  if (Client != NULL && PlayerName != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    Client->Name = PlayerName;
+    GameServerRoom* Room = Client->Room;
+    if (Room != NULL)
     {
-      Client->SendRoomInfo(Ptr->Id,Ptr->Name,Ptr->Locked,(Ptr->BlackPlayer != NULL ? 1 : 0) + (Ptr->WhitePlayer != NULL ? 1 : 0) + Ptr->Observers.Size());
-      Ptr = Rooms.GetNext();
+      /* Forward to the entire room */
+      if (Room->WhitePlayer != NULL)
+        Room->WhitePlayer->SendName(Client->Id, Client->Name);
+      if (Room->BlackPlayer != NULL)
+        Room->BlackPlayer->SendName(Client->Id, Client->Name);
+      list<GameServerClient*>::iterator it;
+      for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+        (*it)->SendName(Client->Id, Client->Name);
     }
+    else
+      Client->SendName(Client->Id, Client->Name);
+    ReleaseMutex(Mutex);
+  }
+}
+
+void GameServer::SetReady(GameServerClient* Client)
+{
+  if (Client != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    /* Update player */
+    Client->Ready = true;
+
+    GameServerRoom* Room = Client->Room;
+    if (Room != NULL)
+    {
+      /* Notify the room's players */
+      if (Room->WhitePlayer != NULL)
+        Room->WhitePlayer->SendPlayerReady(Client->Id);
+      if (Room->BlackPlayer != NULL)
+        Room->BlackPlayer->SendPlayerReady(Client->Id);
+      list<GameServerClient*>::iterator it;
+      for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+        (*it)->SendPlayerReady(Client->Id);
+      if (Room->WhitePlayer != NULL && Room->WhitePlayer->Ready && Room->BlackPlayer != NULL && Room->BlackPlayer->Ready)
+      {
+        /* Update room players */
+        Room->WhitePlayer->Ready = false;
+        Room->BlackPlayer->Ready = false;
+
+        /* Notify the room's players */
+        Room->WhitePlayer->SendNotification(GameStarted);
+        Room->BlackPlayer->SendNotification(GameStarted);
+        list<GameServerClient*>::iterator it;
+        for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
+          (*it)->SendNotification(GameStarted);
+      }
+    }
+    ReleaseMutex(Mutex);
   }
 }
 
@@ -252,7 +548,12 @@ unsigned int GameServer::Run()
         ClientIdCounter = 1;
       else
         ClientIdCounter++;
-      Clients.Add(new GameServerClient(this, SocketId, ClientIdCounter));
+      GameServerClient* Client = new GameServerClient(this, SocketId, ClientIdCounter);
+      if (WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+      {
+        Clients.push_back(Client);
+        ReleaseMutex(Mutex);
+      }
     }
     else
     {

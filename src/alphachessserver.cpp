@@ -105,89 +105,84 @@ AlphaChessServer::AlphaChessServer(HINSTANCE hInstance, HWND hParent)
 string AlphaChessServer::GetJSONPlayers()
 {
   string Result;
-  const LinkedList<GameServerClient> Clients = ChessServer->GetClients();
+  list<GameServerClientInfo*>* Clients = ChessServer->GetClients();
+  list<GameServerClientInfo*>::iterator it;
   Result = "[";
-  GameServerClient* Client = Clients.GetFirst();
-  while (Client != NULL)
+  for (it = Clients->begin(); it != Clients->end(); it++)
   {
-    if (Client != Clients.GetFirst())
+    if (it != Clients->begin())
       Result += ",";
     Result += "[\"";
-    char* Str = inttostr(Client->Id);
+    char* Str = inttostr((*it)->Id);
     Result += Str;
     delete[] Str;
     Result += "\",\"";
-    Result += Client->Name;
+    Result += (*it)->Name;
     Result += "\",\"";
-    Str = inttostr(Client->Version);
+    Str = inttostr((*it)->Version);
     Result += Str;
     delete[] Str;
     Result += "\",\"";
-    Str = inttostr(Client->ConnectionTime());
+    Str = inttostr((*it)->ConnectionTime);
     Result += Str;
     delete[] Str;
     Result += "\",\"";
-    if (Client->Room != NULL)
-      Result += Client->Room->Name;
+    Str = inttostr((*it)->RoomId);
+    Result += Str;
+    delete[] Str;
     Result += "\",\"";
-    if (Client->Room != NULL)
-    {
-      if (Client == Client->Room->WhitePlayer)
-        Result += "White Player";
-      else if (Client == Client->Room->BlackPlayer)
-        Result += "Black Player";
-      else
-        Result += "Observer";
-    }
+    Str = inttostr((*it)->Type);
+    Result += Str;
+    delete[] Str;
     Result += "\",\"";
-    if (Client->Room != NULL && Client->Ready)
-      Result += "Ready";
+    Result += ((*it)->Ready ? "1" : "0");
     Result += "\"]";
-    Client = Clients.GetNext();
   }
   Result += "]";
+  for (it = Clients->begin(); it != Clients->end(); it++)
+    delete *it;
+  delete Clients;
   return Result;
 }
 
 string AlphaChessServer::GetJSONRooms()
 {
   string Result;
-  const LinkedList<GameServerRoom> Rooms = ChessServer->GetRooms();
+  list<GameServerRoomInfo*>* Rooms = ChessServer->GetRooms();
+  list<GameServerRoomInfo*>::iterator it;
   Result = "[";
-  GameServerRoom* Room = Rooms.GetFirst();
-  while (Room != NULL)
+  for (it = Rooms->begin(); it != Rooms->end(); it++)
   {
-    if (Room != Rooms.GetFirst())
+    if (it != Rooms->begin())
       Result += ",";
     Result += "[\"";
-    char* Str = inttostr(Room->Id);
+    char* Str = inttostr((*it)->Id);
     Result += Str;
     delete[] Str;
     Result += "\",\"";
-    Result += Room->Name;
+    Result += (*it)->Name;
     Result += "\",\"";
-    if (Room->Locked)
+    if ((*it)->Locked)
       Result += "Private";
     else
       Result += "Public";
     Result += "\",\"";
-    if (Room->BlackPlayer != NULL && Room->BlackPlayer->Ready && Room->WhitePlayer != NULL && Room->WhitePlayer->Ready)
-    {
-      if (Room->Paused)
-        Result += "Paused";
-      else
-        Result += "Playing";
-    }
+    if ((*it)->Started && (*it)->Paused)
+      Result += "Paused";
+    else if ((*it)->Started)
+      Result += "Playing";
     else
       Result += "Waiting";
     Result += "\",\"";
-    Str = inttostr(Room->Observers.Size()+(Room->BlackPlayer != NULL ? 1 : 0)+(Room->WhitePlayer != NULL ? 1 : 0));
+    Str = inttostr((*it)->Players);
     Result += Str;
     delete[] Str;
     Result += "\"]";
-    Room = Rooms.GetNext();
   }
   Result += "]";
+  for (it = Rooms->begin(); it != Rooms->end(); it++)
+    delete *it;
+  delete Rooms;
   return Result;
 }
 
