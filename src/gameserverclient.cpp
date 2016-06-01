@@ -37,6 +37,11 @@ GameServerClient::GameServerClient(GameServer* Parent, SOCKET SocketId, unsigned
   Resume();
 }
 
+GameServerClient::~GameServerClient()
+{
+  Socket->Close();
+}
+
 long GameServerClient::ConnectionTime()
 {
   return Socket->GetConnectionTime();
@@ -178,7 +183,7 @@ bool GameServerClient::SendPromoteTo(const int Type)
   return true;
 }
 
-bool GameServerClient::SendRoomInfo(const unsigned int RoomId, const string RoomName, const bool RoomLocked, const int PlayerCount)
+bool GameServerClient::SendRoomInfo(const unsigned int RoomId, const string RoomName, const bool RoomPrivate, const int PlayerCount)
 {
   if (!Socket->SendInteger(ND_RoomInfo))
     return false;
@@ -186,7 +191,7 @@ bool GameServerClient::SendRoomInfo(const unsigned int RoomId, const string Room
     return false;
   if (!Socket->SendString(RoomName.c_str()))
     return false;
-  if (!Socket->SendInteger(RoomLocked))
+  if (!Socket->SendInteger(RoomPrivate))
     return false;
   if (!Socket->SendInteger(PlayerCount))
     return false;
@@ -377,6 +382,7 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
             case IResign:
             {
               Client->Server->SendNotification(Room, Resigned);
+              Client->Server->EndGame(Room);
               break;
             }
             case GamePaused:
@@ -394,6 +400,7 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
             case DrawRequestAccepted:
             {
               Client->Server->SendNotification(Room, GameDrawed);
+              Client->Server->EndGame(Room);
               break;
             }
             case TakebackRequestAccepted:
@@ -403,6 +410,7 @@ int GameServerClient::ReceiveData(GameServerClient* Client)
             }
             case GameEnded:
             {
+              Client->Server->EndGame(Room);
               break;
             }
             default:
@@ -472,10 +480,10 @@ unsigned int GameServerClient::Run()
 
     /* Remove the player from the server */
     Server->LeaveRoom(this);
-    Server->RemoveClient(this);
   }
 
   /* Close the socket */
+  Server->RemoveClient(this);
   Socket->Close();
 
   /* Clean up */

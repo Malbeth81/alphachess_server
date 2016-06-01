@@ -25,10 +25,13 @@ int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInst, LPSTR cmdLine, i
 {
   MSG Message;
 
-  /* Create the main window */
-  AlphaChessServer* alphachessserver = AlphaChessServer::GetInstance(hInstance, HWND_DESKTOP);
+  /* Create application */
+  AlphaChessServer* alphachessserver = AlphaChessServer::GetInstance();
   if (alphachessserver != NULL)
   {
+    /* Initialise application */
+    alphachessserver->Initialize(hInstance, cmdLine, HWND_DESKTOP);
+
     /* Start the message loop */
     while (GetMessage(&Message, NULL, 0, 0) != 0)
     {
@@ -36,8 +39,9 @@ int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInst, LPSTR cmdLine, i
       TranslateMessage(&Message);
       DispatchMessage(&Message);
     }
+
+    /* Clean up */
+    delete alphachessserver;
   }
-  /* Clean up */
-  delete alphachessserver;
   return 0;
 }

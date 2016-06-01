@@ -24,20 +24,23 @@
 #include "resource.h"
 #include "system.h"
 #include <cstrutils.h>
+#include <fstream>
 #include <string>
 #include <httpserver.h>
+#include <winservice.h>
 #include <winutils.h>
 
 using namespace std;
 
-class AlphaChessServer
+class AlphaChessServer : public Observer
 {
 public:
-  static AlphaChessServer* GetInstance(HINSTANCE hInstance, HWND hParent);
-
   ~AlphaChessServer();
 
   HWND GetHandle();
+  static AlphaChessServer* GetInstance();
+  void Initialize(HINSTANCE hInstance, LPSTR CmdLine, HWND hParent);
+
 private:
   static ATOM ClassAtom;
   static string ClassName;
@@ -45,20 +48,22 @@ private:
   static string ApplicationPath;
   static string WebRootDirectory;
 
-  static AlphaChessServer* Instance;
-
   HWND Handle;
   NOTIFYICONDATA* TrayIcon;
   HMENU TrayMenu;
 
   GameServer* ChessServer;
+  WinService* Service;
   HTTPServer* WebServer;
 
-  AlphaChessServer(HINSTANCE hInstance, HWND hParent);
+  AlphaChessServer();
 
   string GetJSONPlayers();
   string GetJSONRooms();
   static HTTPResponse* __stdcall HTTPServerProc(HTTPRequest* Request);
+  void Notify(const int Event, const void* Param);
+  void Start();
+  void Stop();
   static LRESULT __stdcall WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 };
 

@@ -25,19 +25,24 @@
 #include "system.h"
 #include <limits.h>
 #include <list>
+#include <observer.h>
 #include <string>
 #include <tcpserversocket.h>
 #include <thread.h>
 
 using namespace std;
 
-class GameServerClient;
+class GameServerClient; /* because of circular reference */
+
+enum GameServerRoomEvent {RoomGameStarted, RoomGameEnded};
 
 struct GameServerRoom
 {
   unsigned int Id;
-  bool Locked;
+  bool Private;
   bool Paused;
+  bool Started;
+  unsigned int StartTimestamp;
   string Name;
   GameServerClient* Owner;
   GameServerClient* WhitePlayer;
@@ -62,14 +67,15 @@ struct GameServerClientInfo
 struct GameServerRoomInfo
 {
   unsigned int Id;
-  bool Locked;
+  bool Private;
   bool Paused;
   bool Started;
   string Name;
   unsigned int Players;
+  unsigned int Time;
 };
 
-class GameServer : public Thread
+class GameServer : public Thread, public Observable
 {
 public:
   static const int Port;
@@ -82,6 +88,7 @@ public:
 
   void ChangeSeat(GameServerClient* Client, PlayerType Type);
   GameServerRoom* CreateRoom(GameServerClient* Client, string Name);
+  void EndGame(GameServerRoom* Room);
   GameServerClient* FindPlayer(unsigned int Id);
   GameServerRoom* FindRoom(unsigned int Id);
   list<GameServerClientInfo*>* GetClients();

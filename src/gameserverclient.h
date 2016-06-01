@@ -33,7 +33,7 @@ using namespace std;
 
 struct GameServerRoom;
 
-class GameServer;
+class GameServer; /* because of circular reference */
 
 class GameServerClient : public Thread
 {
@@ -46,6 +46,7 @@ public:
   int Version;
 
   GameServerClient(GameServer* Parent, SOCKET Socket, unsigned int ClientId);
+  ~GameServerClient();
 
   long ConnectionTime();
   bool SendGameData(const void* Data, const unsigned long DataSize);
@@ -62,7 +63,7 @@ public:
   bool SendPlayerReady(const unsigned int PlayerId);
   bool SendPlayerRequest(const PlayerRequestType Request);
   bool SendPromoteTo(const int Type);
-  bool SendRoomInfo(const unsigned int RoomId, const string RoomName, const bool RoomLocked, const int PlayerCount);
+  bool SendRoomInfo(const unsigned int RoomId, const string RoomName, const bool RoomPrivate, const int PlayerCount);
   bool SendTime(const unsigned int PlayerId, const unsigned long Time);
 
 private:

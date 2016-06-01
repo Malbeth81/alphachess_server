@@ -27,21 +27,20 @@ string AlphaChessServer::ClassName = "AlphaChessServer";
 string AlphaChessServer::ApplicationPath = GetApplicationPath();
 string AlphaChessServer::WebRootDirectory = AlphaChessServer::ApplicationPath + "\\admin\\";
 
-AlphaChessServer* AlphaChessServer::Instance = NULL;
-
 // PUBLIC FUNCTIONS ------------------------------------------------------------
 
-AlphaChessServer* AlphaChessServer::GetInstance(HINSTANCE hInstance, HWND hParent)
+AlphaChessServer* AlphaChessServer::GetInstance()
 {
+  static AlphaChessServer* Instance = NULL;
   if (Instance == NULL)
-    Instance = new AlphaChessServer(hInstance, hParent);
+    Instance = new AlphaChessServer();
   return Instance;
 }
 
 AlphaChessServer::~AlphaChessServer()
 {
-  if (ChessServer != NULL)
-    delete ChessServer;
+  Stop();
+
   /* Destroy the window */
   if (Handle != NULL)
     DestroyWindow(Handle);
@@ -52,9 +51,101 @@ HWND AlphaChessServer::GetHandle()
   return Handle;
 }
 
+void AlphaChessServer::Initialize(HINSTANCE hInstance, LPSTR CmdLine, HWND hParent)
+{
+  const char* ServiceName = "alphachess";
+  const char* ServiceLabel = "AlphaChess Server";
+
+  if (IsRunningAsApplication())
+  {
+    bool InstallService = false;
+    bool UninstallService = false;
+
+    /* Parse parameters */
+    if (CmdLine != NULL)
+    {
+      char* str = lowerstr(CmdLine);
+      InstallService = (strpos(str, "-install") >= 0);
+      UninstallService = (strpos(str, "-uninstall") >= 0);
+      delete[] str;
+    }
+
+    if (InstallService)
+    {
+      /* Install service */
+      bool Result = WinService::GetInstance()->Install(ServiceName, ServiceLabel, " executionmode=service");
+      if (Result)
+        MessageBox(NULL, "Service installed successfully!", "Install service", MB_OK);
+      else
+        MessageBox(NULL, "An error occured while installing the service!", "Install service", MB_OK);
+      Stop();
+      return;
+    }
+    else if (UninstallService)
+    {
+      /* Uninstall service */
+      bool Result = WinService::GetInstance()->Uninstall(ServiceName);
+      if (Result)
+        MessageBox(NULL, "Service uninstalled successfully!", "Uninstall service", MB_OK);
+      else
+        MessageBox(NULL, "An error occured while uninstalling the service!", "Uninstall service", MB_OK);
+      Stop();
+      return;
+    }
+
+    /* Initialise application */
+    if (ClassAtom == 0)
+    {
+      /* Register the window's class */
+      WNDCLASSEX WndClass;
+      WndClass.cbSize = sizeof(WNDCLASSEX);
+      WndClass.lpszClassName = ClassName.c_str();
+      WndClass.hInstance = hInstance;
+      WndClass.lpfnWndProc = WindowProc;
+      WndClass.style = 0;
+      WndClass.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+      WndClass.hIcon = NULL;
+      WndClass.hIconSm = NULL;
+      WndClass.hCursor = LoadCursor(NULL,IDC_ARROW);
+      WndClass.lpszMenuName = NULL;
+      WndClass.cbClsExtra = 0;
+      WndClass.cbWndExtra = 0;
+      ClassAtom = RegisterClassEx(&WndClass);
+    }
+    /* Create the window */
+    if (ClassAtom != 0)
+    {
+      /* Create the menu */
+      TrayMenu = CreatePopupMenu();
+      AppendMenu(TrayMenu,IDS_TRAYMENU_ADMIN);
+      AppendSeparator(TrayMenu);
+      AppendMenu(TrayMenu,IDS_TRAYMENU_EXIT);
+
+      Handle = CreateWindowEx(WS_EX_TOOLWINDOW ,ClassName.c_str(),"AlphaChessServer 4 Server",
+          0,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,hParent,NULL,hInstance,this);
+      if (Handle == NULL)
+      {
+        Stop();
+        return;
+      }
+    }
+  }
+  else
+  {
+    /* Initialise service */
+    Service = WinService::GetInstance();
+    Service->AddObserver(this);
+    if (!Service->Initialize())
+    {
+      Stop();
+      return;
+    }
+  }
+}
+
 // PRIVATE FUNCTIONS -----------------------------------------------------------
 
-AlphaChessServer::AlphaChessServer(HINSTANCE hInstance, HWND hParent)
+AlphaChessServer::AlphaChessServer()
 {
   /* Initialise class members */
   Handle = NULL;
@@ -62,127 +153,97 @@ AlphaChessServer::AlphaChessServer(HINSTANCE hInstance, HWND hParent)
   TrayMenu = NULL;
 
   ChessServer = NULL;
+  Service = NULL;
   WebServer = NULL;
-
-  if (ClassAtom == 0)
-  {
-    /* Register the window's class */
-    WNDCLASSEX WndClass;
-    WndClass.cbSize = sizeof(WNDCLASSEX);
-    WndClass.lpszClassName = ClassName.c_str();
-    WndClass.hInstance = hInstance;
-    WndClass.lpfnWndProc = WindowProc;
-    WndClass.style = 0;
-    WndClass.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
-    WndClass.hIcon = NULL;
-    WndClass.hIconSm = NULL;
-    WndClass.hCursor = LoadCursor(NULL,IDC_ARROW);
-    WndClass.lpszMenuName = NULL;
-    WndClass.cbClsExtra = 0;
-    WndClass.cbWndExtra = 0;
-    ClassAtom = RegisterClassEx(&WndClass);
-  }
-  /* Create the window */
-  if (ClassAtom != 0)
-  {
-    /* Create the menu */
-    TrayMenu = CreatePopupMenu();
-    AppendMenu(TrayMenu,IDS_TRAYMENU_ADMIN);
-    AppendSeparator(TrayMenu);
-    AppendMenu(TrayMenu,IDS_TRAYMENU_EXIT);
-
-    Handle = CreateWindowEx(WS_EX_TOOLWINDOW ,ClassName.c_str(),"AlphaChessServer 4 Server",
-        0,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,hParent,NULL,hInstance,this);
-    if (Handle != NULL)
-    {
-      ChessServer = new GameServer();
-      WebServer = new HTTPServer(HTTPServerProc);
-      WebServer->Open(2580);
-    }
-  }
 }
 
 string AlphaChessServer::GetJSONPlayers()
 {
   string Result;
-  list<GameServerClientInfo*>* Clients = ChessServer->GetClients();
-  list<GameServerClientInfo*>::iterator it;
-  Result = "[";
-  for (it = Clients->begin(); it != Clients->end(); it++)
+  if (ChessServer != NULL)
   {
-    if (it != Clients->begin())
-      Result += ",";
-    Result += "[\"";
-    char* Str = inttostr((*it)->Id);
-    Result += Str;
-    delete[] Str;
-    Result += "\",\"";
-    Result += (*it)->Name;
-    Result += "\",\"";
-    Str = inttostr((*it)->Version);
-    Result += Str;
-    delete[] Str;
-    Result += "\",\"";
-    Str = inttostr((*it)->ConnectionTime);
-    Result += Str;
-    delete[] Str;
-    Result += "\",\"";
-    Str = inttostr((*it)->RoomId);
-    Result += Str;
-    delete[] Str;
-    Result += "\",\"";
-    Str = inttostr((*it)->Type);
-    Result += Str;
-    delete[] Str;
-    Result += "\",\"";
-    Result += ((*it)->Ready ? "1" : "0");
-    Result += "\"]";
+    list<GameServerClientInfo*>* Clients = ChessServer->GetClients();
+    list<GameServerClientInfo*>::iterator it;
+    Result = "[";
+    for (it = Clients->begin(); it != Clients->end(); it++)
+    {
+      if (it != Clients->begin())
+        Result += ",";
+      Result += "[\"";
+      char* Str = inttostr((*it)->Id);
+      Result += Str;
+      delete[] Str;
+      Result += "\",\"";
+      Result += (*it)->Name;
+      Result += "\",\"";
+      Str = inttostr((*it)->Version);
+      Result += Str;
+      delete[] Str;
+      Result += "\",\"";
+      Str = inttostr((*it)->ConnectionTime);
+      Result += Str;
+      delete[] Str;
+      Result += "\",\"";
+      Str = inttostr((*it)->RoomId);
+      Result += Str;
+      delete[] Str;
+      Result += "\",\"";
+      Str = inttostr((*it)->Type);
+      Result += Str;
+      delete[] Str;
+      Result += "\",\"";
+      Result += ((*it)->Ready ? "1" : "0");
+      Result += "\"]";
+    }
+    Result += "]";
+    for (it = Clients->begin(); it != Clients->end(); it++)
+      delete *it;
+    delete Clients;
   }
-  Result += "]";
-  for (it = Clients->begin(); it != Clients->end(); it++)
-    delete *it;
-  delete Clients;
   return Result;
 }
 
 string AlphaChessServer::GetJSONRooms()
 {
   string Result;
-  list<GameServerRoomInfo*>* Rooms = ChessServer->GetRooms();
-  list<GameServerRoomInfo*>::iterator it;
-  Result = "[";
-  for (it = Rooms->begin(); it != Rooms->end(); it++)
+  if (ChessServer != NULL)
   {
-    if (it != Rooms->begin())
-      Result += ",";
-    Result += "[\"";
-    char* Str = inttostr((*it)->Id);
-    Result += Str;
-    delete[] Str;
-    Result += "\",\"";
-    Result += (*it)->Name;
-    Result += "\",\"";
-    if ((*it)->Locked)
-      Result += "Private";
-    else
-      Result += "Public";
-    Result += "\",\"";
-    if ((*it)->Started && (*it)->Paused)
-      Result += "Paused";
-    else if ((*it)->Started)
-      Result += "Playing";
-    else
-      Result += "Waiting";
-    Result += "\",\"";
-    Str = inttostr((*it)->Players);
-    Result += Str;
-    delete[] Str;
-    Result += "\"]";
+    list<GameServerRoomInfo*>* Rooms = ChessServer->GetRooms();
+    list<GameServerRoomInfo*>::iterator it;
+    Result = "[";
+    for (it = Rooms->begin(); it != Rooms->end(); it++)
+    {
+      if (it != Rooms->begin())
+        Result += ",";
+      Result += "[\"";
+      char* Str = inttostr((*it)->Id);
+      Result += Str;
+      delete[] Str;
+      Result += "\",\"";
+      Result += (*it)->Name;
+      Result += "\",\"";
+      if ((*it)->Private)
+        Result += "Private";
+      else
+        Result += "Public";
+      Result += "\",\"";
+      if ((*it)->Started && (*it)->Paused)
+        Result += "Paused";
+      else if ((*it)->Started)
+        Result += "Playing";
+      else
+        Result += "Waiting";
+      Result += "\",\"";
+      Str = inttostr((*it)->Players);
+      Result += Str;
+      delete[] Str;
+      Result += "\"]";
+    }
+    Result += "]";
+    for (it = Rooms->begin(); it != Rooms->end(); it++)
+      delete *it;
+    delete Rooms;
   }
-  Result += "]";
-  for (it = Rooms->begin(); it != Rooms->end(); it++)
-    delete *it;
-  delete Rooms;
   return Result;
 }
 
@@ -245,9 +306,9 @@ HTTPResponse* __stdcall AlphaChessServer::HTTPServerProc(HTTPRequest* Request)
       if (Extension == "json")
       {
         if (GetFileName(Request->Filename) == "players")
-          Response->Content = Instance->GetJSONPlayers();
+          Response->Content = GetInstance()->GetJSONPlayers();
         else if (GetFileName(Request->Filename) == "rooms")
-          Response->Content = Instance->GetJSONRooms();
+          Response->Content = GetInstance()->GetJSONRooms();
       }
       else
       {
@@ -270,6 +331,105 @@ HTTPResponse* __stdcall AlphaChessServer::HTTPServerProc(HTTPRequest* Request)
     Response->Status = "501 Not Implemented";
     return Response;
   }
+}
+
+void AlphaChessServer::Notify(const int Event, const void* Param)
+{
+  switch (Event)
+  {
+    case RoomGameStarted:
+    {
+      break;
+    }
+    case RoomGameEnded:
+    {
+      GameServerRoom* Room = (GameServerRoom*)Param;
+
+      if (Room != NULL)
+      {
+        SYSTEMTIME Time;
+        GetSystemTime(&Time);
+        char* Str = FormatDate(&Time, 0, "yyyy-MM-dd");
+        string FileName = WebRootDirectory;
+        FileName.append("logs\\").append(Str).append(".log");
+        delete[] Str;
+
+        /* Add to history file */
+        ofstream File(FileName.c_str(), ios::app);
+        if (File.is_open())
+        {
+          string data;
+          data.append(Room->Name).append(",");
+          data.append(Room->Private ? "Private" : "Public").append(",");
+          data.append(Room->WhitePlayer != NULL ? Room->WhitePlayer->Name : "").append(",");
+          data.append(Room->BlackPlayer != NULL ? Room->BlackPlayer->Name : "").append(",");
+          Str = inttostr(Room->Observers.size());
+          data.append(Str).append(",");
+          delete[] Str;
+          if (Room->StartTimestamp > 0)
+          {
+            unsigned int TickCount = GetTickCount();
+            Str = inttostr(TickCount > Room->StartTimestamp ? TickCount - Room->StartTimestamp : UINT_MAX - Room->StartTimestamp + TickCount);
+          }
+          else
+            Str = inttostr(0);
+          data.append(Str);
+          delete[] Str;
+          File.write(data.c_str(), data.size());
+          File.write("\n", 1);
+          File.close();
+        }
+      }
+      break;
+    }
+    case ServiceStarting:
+    {
+      /* Start server */
+      Start();
+      break;
+    }
+    case ServiceStarted:
+    {
+      break;
+    }
+    case ServiceStopping:
+    {
+      /* Stop server */
+      Stop();
+      break;
+    }
+    case ServiceStopped:
+    {
+      break;
+    }
+  }
+}
+
+void AlphaChessServer::Start()
+{
+  /* Start the server */
+  ChessServer = new GameServer();
+  ChessServer->AddObserver(this);
+  WebServer = new HTTPServer(HTTPServerProc);
+  WebServer->Open(2580);
+}
+
+void AlphaChessServer::Stop()
+{
+  /* Stop the server */
+  if (ChessServer != NULL)
+  {
+    delete ChessServer;
+    ChessServer = NULL;
+  }
+  if (WebServer != NULL)
+  {
+    delete WebServer;
+    WebServer = NULL;
+  }
+
+  /* Exit application */
+  PostQuitMessage(0);
 }
 
 // PRIVATE WINAPI FUNCTIONS ----------------------------------------------------
@@ -325,6 +485,9 @@ LRESULT __stdcall AlphaChessServer::WindowProc(HWND hWnd, UINT Msg, WPARAM wPara
         Window->TrayIcon->hIcon = (HICON)LoadImage((HINSTANCE)GetWindowLong(hWnd, GWL_HINSTANCE), "ID_TRAYICON", IMAGE_ICON, 16, 16, LR_CREATEDIBSECTION);
         strcpy(Window->TrayIcon->szTip, "AlphaChess 4 Server");
         Shell_NotifyIcon(NIM_ADD, Window->TrayIcon);
+
+        /* Start server */
+        Window->Start();
       }
       return 0;
     }
@@ -335,8 +498,10 @@ LRESULT __stdcall AlphaChessServer::WindowProc(HWND hWnd, UINT Msg, WPARAM wPara
       {
         Shell_NotifyIcon(NIM_DELETE, Window->TrayIcon);
         delete Window->TrayIcon;
+        Window->Stop();
       }
-      PostQuitMessage(0);
+      else
+        PostQuitMessage(0);
       return 0;
     }
     case WM_SHELLTRAYICON:

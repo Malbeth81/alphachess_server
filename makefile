@@ -1,7 +1,7 @@
 # Global parameters
 GCC = g++.exe
-FLAGS = -Wall -fmessage-length=0 -I..\includes -g -DDEBUG
-#FLAGS = -Wall -fmessage-length=0 -I..\includes -O2
+#FLAGS = -Wall -fmessage-length=0 -I..\includes -g -DDEBUG
+FLAGS = -Wall -fmessage-length=0 -I..\includes -O2
 TARGET = bin\alphachessserver.exe
 
 all: $(TARGET)

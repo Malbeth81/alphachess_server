@@ -31,8 +31,8 @@ struct ConnectionInfo
 /* Initialise static class members */
 const int GameServer::Port = 2570;
 const char* GameServer::Id = "AlphaChess";
-const int GameServer::SupportedVersion = 400;
-const int GameServer::Version = 400;
+const int GameServer::SupportedVersion = 402;
+const int GameServer::Version = 405;
 
 // Public functions ------------------------------------------------------------
 
@@ -118,8 +118,10 @@ GameServerRoom* GameServer::CreateRoom(GameServerClient* Client, string Name)
     /* Create a new room */
     Room = new GameServerRoom;
     Room->Id = RoomIdCounter;
-    Room->Locked = false;
+    Room->Private = false;
     Room->Paused = false;
+    Room->Started = false;
+    Room->StartTimestamp = 0;
     Room->Name = Name;
     Room->Owner = Client;
     Room->BlackPlayer = NULL;
@@ -131,6 +133,22 @@ GameServerRoom* GameServer::CreateRoom(GameServerClient* Client, string Name)
     ReleaseMutex(Mutex);
   }
   return Room;
+}
+
+void GameServer::EndGame(GameServerRoom* Room)
+{
+  if (Room != NULL && WaitForSingleObject(Mutex,INFINITE) == WAIT_OBJECT_0)
+  {
+    if (Room->Started)
+      /* Notify observers */
+      NotifyObservers(RoomGameEnded, Room);
+
+    /* Update room */
+    Room->Started = false;
+    Room->StartTimestamp = 0;
+
+    ReleaseMutex(Mutex);
+  }
 }
 
 GameServerClient* GameServer::FindPlayer(unsigned int Id)
@@ -201,9 +219,16 @@ list<GameServerRoomInfo*>* GameServer::GetRooms()
       GameServerRoomInfo* Info = new GameServerRoomInfo;
       Info->Id = (*it)->Id;
       Info->Name = (*it)->Name;
-      Info->Locked = (*it)->Locked;
+      Info->Private = (*it)->Private;
       Info->Paused = (*it)->Paused;
-      Info->Started = ((*it)->BlackPlayer != NULL && (*it)->BlackPlayer->Ready && (*it)->WhitePlayer != NULL && (*it)->WhitePlayer->Ready);
+      Info->Started = (*it)->Started;
+      if ((*it)->Started)
+      {
+        unsigned int TickCount = GetTickCount();
+        Info->Time = (TickCount > (*it)->StartTimestamp ? TickCount - (*it)->StartTimestamp : UINT_MAX - (*it)->StartTimestamp + TickCount);
+      }
+      else
+        Info->Time = 0;
       Info->Players = (*it)->Observers.size()+((*it)->BlackPlayer != NULL ? 1 : 0)+((*it)->WhitePlayer != NULL ? 1 : 0);
       List->push_back(Info);
     }
@@ -286,6 +311,10 @@ void GameServer::LeaveRoom(GameServerClient* Client)
       /* Delete the room if there are no more players in it */
       if (Room->WhitePlayer == NULL && Room->BlackPlayer == NULL && Room->Observers.size() == 0)
       {
+        if (Room->Started)
+          /* Notify observers */
+          NotifyObservers(RoomGameEnded, Room);
+
         Rooms.remove(Room);
         delete Room;
       }
@@ -449,7 +478,7 @@ void GameServer::SendRoomList(GameServerClient* Client)
   {
     list<GameServerRoom*>::iterator it;
     for (it = Rooms.begin(); it != Rooms.end(); it++)
-      Client->SendRoomInfo((*it)->Id,(*it)->Name,(*it)->Locked,((*it)->BlackPlayer != NULL ? 1 : 0) + ((*it)->WhitePlayer != NULL ? 1 : 0) + (*it)->Observers.size());
+      Client->SendRoomInfo((*it)->Id,(*it)->Name,(*it)->Private,((*it)->BlackPlayer != NULL ? 1 : 0) + ((*it)->WhitePlayer != NULL ? 1 : 0) + (*it)->Observers.size());
     ReleaseMutex(Mutex);
   }
 }
@@ -514,6 +543,8 @@ void GameServer::SetReady(GameServerClient* Client)
       if (Room->WhitePlayer != NULL && Room->WhitePlayer->Ready && Room->BlackPlayer != NULL && Room->BlackPlayer->Ready)
       {
         /* Update room players */
+        Room->Started = true;
+        Room->StartTimestamp = GetTickCount();
         Room->WhitePlayer->Ready = false;
         Room->BlackPlayer->Ready = false;
 
@@ -523,6 +554,9 @@ void GameServer::SetReady(GameServerClient* Client)
         list<GameServerClient*>::iterator it;
         for (it = Room->Observers.begin(); it != Room->Observers.end(); it++)
           (*it)->SendNotification(GameStarted);
+
+        /* Notify observers */
+        NotifyObservers(RoomGameStarted, Room);
       }
     }
     ReleaseMutex(Mutex);
@@ -558,7 +592,7 @@ unsigned int GameServer::Run()
     else
     {
       int Error = WSAGetLastError();
-      if (Error != WSAEWOULDBLOCK && Error != WSAETIMEDOUT)
+      if (Error != WSAEWOULDBLOCK)
         break;
     }
     Sleep(100);
