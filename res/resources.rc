@@ -1,5 +1,5 @@
 /*
-* Main.cpp
+* Resource.rc - A collection of resources (Menu, Icons, Dialogs).
 *
 * Copyright (C) 2007-2011 Marc-André Lamothe.
 *
@@ -17,27 +17,15 @@
 * along with this program; if not, write to the Free Software
 * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 */
-#include "alphachessserver.h"
+#include "../src/resource.h"
+#include "../src/system.h"
 
-// WinAPI functions ------------------------------------------------------------
+1                  24               "res/alphachess4server.manifest"
+ID_TRAYICON        ICON             "res/alphachess4server.ico"
 
-int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInst, LPSTR cmdLine, int Show)
-{
-  MSG Message;
-
-  /* Create the main window */
-  AlphaChessServer* alphachessserver = AlphaChessServer::GetInstance(hInstance, HWND_DESKTOP);
-  if (alphachessserver != NULL)
-  {
-    /* Start the message loop */
-    while (GetMessage(&Message, NULL, 0, 0) != 0)
-    {
-      /* Process messages */
-      TranslateMessage(&Message);
-      DispatchMessage(&Message);
-    }
-  }
-  /* Clean up */
-  delete alphachessserver;
-  return 0;
-}
+STRINGTABLE
+BEGIN
+    /* TRAY MENU ITEM STRINGS */
+    IDS_TRAYMENU_ADMIN              "&Open administrative panel"
+    IDS_TRAYMENU_EXIT               "&Exit"
+END

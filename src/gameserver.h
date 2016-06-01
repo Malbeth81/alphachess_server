@@ -20,35 +20,32 @@
 #ifndef GAMESERVER_H_
 #define GAMESERVER_H_
 
-#include <tcpclientsocket.h>
-#include <tcpserversocket.h>
-#include <linkedlist.h>
 #include "gamedata.h"
+#include "gameserverclient.h"
+#include "system.h"
+#include <limits.h>
+#include <linkedlist.h>
+#include <string>
+#include <tcpserversocket.h>
+#include <thread.h>
 
-struct RoomInfo;
-struct PlayerInfo
-{
-  unsigned int PlayerId;
-  char Name[60];
-  bool Ready;
-  RoomInfo* Room;
-  TCPClientSocket* Socket;
-  bool Synched;
-};
+using namespace std;
 
-struct RoomInfo
+class GameServerClient;
+
+struct GameServerRoom
 {
-  unsigned int RoomId;
+  unsigned int Id;
   bool Locked;
   bool Paused;
-  char Name[60];
-  PlayerInfo* Owner;
-  PlayerInfo* WhitePlayer;
-  PlayerInfo* BlackPlayer;
-  LinkedList<PlayerInfo> Observers;
+  string Name;
+  GameServerClient* Owner;
+  GameServerClient* WhitePlayer;
+  GameServerClient* BlackPlayer;
+  LinkedList<GameServerClient> Observers;
 };
 
-class GameServer
+class GameServer : public Thread
 {
 public:
   static const int Port;
@@ -59,44 +56,22 @@ public:
   GameServer();
   ~GameServer();
 
-  bool Open();
-  bool Close();
+  GameServerRoom* CreateRoom(GameServerClient* Client, string Name);
+  GameServerRoom* FindRoom(unsigned int Id);
+  const LinkedList<GameServerClient> GetClients();
+  const LinkedList<GameServerRoom> GetRooms();
+  void JoinRoom(GameServerClient* Client, GameServerRoom* Room);
+  void LeaveRoom(GameServerClient* Client);
+  void RemoveClient(GameServerClient* Client);
+  void SendRoomList(GameServerClient* Client);
+
 private:
-  TCPServerSocket Socket;
-  HANDLE hServerThread;
-
-  LinkedList<PlayerInfo> Players;
-  unsigned int PlayerIdCounter;
-
-  LinkedList<RoomInfo> Rooms;
+  LinkedList<GameServerClient> Clients;
+  unsigned int ClientIdCounter;
+  LinkedList<GameServerRoom> Rooms;
   unsigned int RoomIdCounter;
 
-  void CloseConnection(PlayerInfo* Player);
-  void ChangePlayerType(PlayerInfo* Player, PlayerType Type);
-  void JoinRoom(RoomInfo* Room, PlayerInfo* Player);
-  void LeaveRoom(PlayerInfo* Player);
-  PlayerInfo* NewPlayer();
-  RoomInfo* NewRoom();
-  PlayerInfo* OpenConnection(TCPClientSocket* Socket);
-  void ReceiveData(PlayerInfo* Player);
-  bool SendGameData(TCPClientSocket* Socket, const void* Data, const unsigned long DataSize);
-  bool SendHostChanged(TCPClientSocket* Socket, const unsigned int Id);
-  bool SendMessage(TCPClientSocket* Socket, const unsigned int PlayerId, const char* AMessage);
-  bool SendMove(TCPClientSocket* Socket, const unsigned long Data);
-  bool SendName(TCPClientSocket* Socket, const unsigned int PlayerId, const char* PlayerName);
-  bool SendNetworkRequest(TCPClientSocket* Socket, const NetworkRequestType Request);
-  bool SendNotification(TCPClientSocket* Socket, const NotificationType Notification);
-  bool SendPlayerId(TCPClientSocket* Socket, const unsigned int Id);
-  bool SendPlayerType(TCPClientSocket* Socket, const unsigned int PlayerId, const PlayerType Type);
-  bool SendPlayerJoined(TCPClientSocket* Socket, const unsigned int PlayerId, const char* PlayerName);
-  bool SendPlayerLeft(TCPClientSocket* Socket, const unsigned int PlayerId);
-  bool SendPlayerReady(TCPClientSocket* Socket, const unsigned int PlayerId);
-  bool SendPlayerRequest(TCPClientSocket* Socket, const PlayerRequestType Request);
-  bool SendPromoteTo(TCPClientSocket* Socket, const int Type);
-  bool SendRoomInfo(TCPClientSocket* Socket, const unsigned int RoomId, const char* RoomName, const bool RoomLocked, const int PlayerCount);
-  bool SendTime(TCPClientSocket* Socket, const unsigned int PlayerId, const unsigned long Time);
-  static unsigned long __stdcall ConnectionThread(void* arg);
-  static unsigned long __stdcall ServerThread(void* arg);
+  unsigned int Run();
 };
 
 #endif

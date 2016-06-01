@@ -1,5 +1,5 @@
 /*
-* Main.cpp
+* Ressource.h - A collection of resources like icons and dialog definition.
 *
 * Copyright (C) 2007-2011 Marc-André Lamothe.
 *
@@ -17,27 +17,10 @@
 * along with this program; if not, write to the Free Software
 * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 */
-#include "alphachessserver.h"
+#ifndef IDC_STATIC
+  #define IDC_STATIC (-1)
+#endif
 
-// WinAPI functions ------------------------------------------------------------
-
-int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInst, LPSTR cmdLine, int Show)
-{
-  MSG Message;
-
-  /* Create the main window */
-  AlphaChessServer* alphachessserver = AlphaChessServer::GetInstance(hInstance, HWND_DESKTOP);
-  if (alphachessserver != NULL)
-  {
-    /* Start the message loop */
-    while (GetMessage(&Message, NULL, 0, 0) != 0)
-    {
-      /* Process messages */
-      TranslateMessage(&Message);
-      DispatchMessage(&Message);
-    }
-  }
-  /* Clean up */
-  delete alphachessserver;
-  return 0;
-}
+/* Tray menu item identifiers */
+#define IDS_TRAYMENU_ADMIN              1101
+#define IDS_TRAYMENU_EXIT               1102

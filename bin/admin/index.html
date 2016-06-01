@@ -1,0 +1,122 @@
+<html>
+<head>
+	<title>AlphaChess 4 Server Administrative Console</title>
+	<link type="text/css" rel="stylesheet" media="all" href="scripts/css/cupertino/jquery-ui-1.8.7.custom.css" />
+	<link type="text/css" rel="stylesheet" media="all" href="stylesheet.css" />
+	<script type="text/javascript" src="scripts/jquery-1.4.4.min.js"></script>
+	<script type="text/javascript" src="scripts/jquery-ui-1.8.7.custom.min.js"></script>
+	<script type="text/javascript" src="scripts/jquery.dataTables.min.js"></script>
+</head>
+<body>
+	<div class="wrapper">
+		<div class="header">
+			<img src="images/logo.png" class="logo" /> 
+			<h1>AlphaChess 4 Server Administrative Console</h1>
+		</div>
+		<div class="content">
+			<div style="float:right;">
+				<a href="#" id="refreshRooms">Refresh list</a>
+			</div>
+			<h2>Currently active game rooms (<span id="roomCount">0</span>)</h2>
+			<table id="rooms" class="datatable ui-widget-content">
+				<thead>
+					<tr><th style="width:50px;">
+						Id
+					</th><th>
+						Name
+					</th><th style="width:80px;">
+						Type
+					</th><th style="width:80px;">
+						State
+					</th><th style="width:80px;">
+						Players
+					</th></tr>
+				</thead>
+				<tbody>
+				</tbody>
+			</table>
+			<br />
+			<div style="float:right;">
+				<a href="#" id="refreshPlayers">Refresh list</a>
+			</div>
+			<h2>Currently connected players (<span id="playerCount">0</span>)</h2>
+			<table id="players" class="datatable ui-widget-content">
+				<thead>
+					<tr><th style="width:50px;">
+						Id
+					</th><th>
+						Name
+					</th><th style="width:80px;">
+						Version
+					</th><th style="width:80px;">
+						Time
+					</th><th>
+						Room
+					</th><th style="width:80px;">
+						Type
+					</th><th style="width:80px;">
+						State
+					</th></tr>
+				</thead>
+				<tbody>
+				</tbody>
+			</table>
+		</div>
+		<div class="footer">
+			Copyright &copy;2011 Marc-Andr&eacute; Lamothe. All rights restricted.
+		</div>
+	</div>
+	<script type="text/javascript">
+		function getPlayers()
+		{
+			$("#players").dataTable().fnClearTable();
+			$.getJSON("JSON/players.json", function (data) {
+				if (data)
+				{
+					$("#playerCount").html(data.length);
+					for (var i = 0; i < data.length; i++)
+						$("#players").dataTable().fnAddData(data[i]);
+				}
+			});
+		}
+		function getRooms()
+		{
+			$("#rooms").dataTable().fnClearTable();
+			$.getJSON("JSON/rooms.json", function (data) {
+				if (data)
+				{
+					$("#roomCount").html(data.length);
+					for (var i = 0; i < data.length; i++)
+						$("#rooms").dataTable().fnAddData(data[i]);
+				}
+			});
+		}
+		$(document).ready(function() {
+			// http://www.datatables.net
+			$("#players").dataTable({
+				"aoColumnDefs": [{
+					"aTargets": [2],
+					"fnRender": function (oObj) {
+     					return oObj.aData[2].substring(0, oObj.aData[2].length-2) + '.' + oObj.aData[2][oObj.aData[2].length-2] + '.' + oObj.aData[2][oObj.aData[2].length-1];
+     				}
+     			},{
+					"aTargets": [3],
+					"fnRender": function (oObj) {
+						var hours = Math.floor(oObj.aData[3] / 3600);
+						var minutes = Math.floor((oObj.aData[3] % 3600) / 60);
+						var seconds = (oObj.aData[3] % 3600) % 60;
+     					return hours+":"+(minutes < 10 ? "0" : "")+minutes+":"+(seconds < 10 ? "0" : "")+seconds;
+     				}
+     			}],
+	     		"bJQueryUI": true,
+	     		"sDom":"t"
+	     	});
+			$("#rooms").dataTable({"bJQueryUI": true, "sDom":"t"});
+			$("#refreshPlayers").button().click(getPlayers);
+			$("#refreshRooms").button().click(getRooms);
+			getPlayers();
+			getRooms();
+		});
+	</script>
+</body>
+</html>

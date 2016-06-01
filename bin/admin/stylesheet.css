@@ -1,0 +1,79 @@
+/* Document object model */
+body {
+	background:#233559;
+	margin:0;
+	padding:0;
+}
+body, table, .ui-widget {
+	font-size:10pt;
+	font-family:Arial;
+}
+h1, h2, h3 {
+	color:#004a94; 
+	margin:0;
+}
+h1 {
+	font-size:2em;
+}
+h2 {
+	font-size:1.35em;
+}
+h3 {
+	font-size:1.15em;
+}
+table {
+	width:100%;
+}
+
+/* Page structure */
+.wrapper {
+	margin:0px auto;
+	width:800px;
+}
+.header {
+	background:#004a94;
+	border:#ffffff 2px solid;
+	border-top:none;
+	padding:10px 15px 10px 10px;
+}
+.header .logo {
+	border:none;
+	float:left;
+	margin: 0 5px 0 0;
+}
+.header h1 {
+	color:#ffffff;
+	margin:10px 0;
+}
+.content {
+	background:#ffffff;
+	padding:10px 15px;
+}
+.footer {
+	color:#D0D0D0;
+	padding:10px;
+	text-align:center;
+}
+
+/* Tables */
+.datatable {
+	border-collapse:collapse;
+}
+.datatable td {
+	padding:2px;
+}
+.datatable tr:hover {
+	background:#e6e9eb;
+}
+
+/* jQuery UI */
+.dataTables_wrapper {
+	clear:both;
+	padding:3px 0;
+}
+.dataTables_wrapper .css_right {
+	float:right;
+}
+.ui-button-text-only .ui-button-text {
+	padding:0.25em 1em;
+}
